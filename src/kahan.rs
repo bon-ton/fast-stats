@@ -1,12 +1,14 @@
 use std::ops::{Add, AddAssign};
+// use accurate::sum::Neumaier;
+// use accurate::traits::SumAccumulator;
 
 /// Local implementation of summator with protection against catastrophic cancellation,
 /// proposed by Kahan and improved by Neumaier.
 ///
-/// We could also use `accurate::sum::Neumaier` or even `accurate::sum::Klein`,
-/// but with a trade of for efficiency, and since performance is critical I'm proposing
-/// simple approach.
-#[derive(Default)]
+/// We could also use `accurate::sum::Neumaier` or even `accurate::sum::Klein`.
+/// They have same API as defined below. But there is a trade of for efficiency,
+/// and since performance is critical I'm proposing simple approach.
+#[derive(Clone, Default)]
 pub struct NeumaierSum {
     s: f64,
     c: f64,

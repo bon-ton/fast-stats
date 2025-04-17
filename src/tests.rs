@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inf_values() {
+    fn test_inf_values_skipped() {
         let mut agg: SymbolAggregator<2, 2> = SymbolAggregator::new();
         agg.add_batch(&[1e200, 1., 2.]);
 
@@ -66,34 +66,56 @@ mod tests {
     #[test]
     fn test_inf_variance() {
         let mut agg: SymbolAggregator<2, 2> = SymbolAggregator::new();
-        agg.add_batch(&[1e154, -1e154, 1e154]);
+        agg.add_batch(&[1e154, -1e154]);
 
-        // two last elems, var is NaN
+        // two last elems
         let stats = agg.get_stats(1).unwrap();
-        assert_eq!(stats.min, -1e154);
+        assert_eq!(stats.min, 1e154);
         assert_eq!(stats.max, 1e154);
         assert_eq!(stats.last, 1e154);
-        assert_eq!(stats.avg, 0.0);
-        assert!(stats.var.is_nan());
+        assert_eq!(stats.avg, 1e154);
+        assert_eq!(stats.var, 0.0);
 
         let seriaized_stats = serde_json::ser::to_string(&stats).unwrap();
         assert_eq!(
             seriaized_stats,
-            "{\"min\":-1e154,\"max\":1e154,\"last\":1e154,\"avg\":0.0,\"var\":null}"
+            "{\"min\":1e154,\"max\":1e154,\"last\":1e154,\"avg\":1e154,\"var\":0.0}"
         );
 
-        // full set, var is NaN
+        // full set
         let stats = agg.get_stats(2).unwrap();
-        assert_eq!(stats.min, -1e154);
+        assert_eq!(stats.min, 1e154);
         assert_eq!(stats.max, 1e154);
         assert_eq!(stats.last, 1e154);
-        assert_eq!(stats.avg, 3.3333333333333333e153);
-        assert!(stats.var.is_nan());
+        assert_eq!(stats.avg, 1e154);
+        assert_eq!(stats.var, 0.0);
+    }
+
+    #[test]
+    fn test_max_variance() {
+        tracing_subscriber::fmt::init();
+        let mut agg: SymbolAggregator<2, 2> = SymbolAggregator::new();
+        agg.add_batch(&[1e153, -1e153, 1e153]);
+
+        // two last elems
+        let stats = agg.get_stats(1).unwrap();
+        assert_eq!(stats.min, -1e153);
+        assert_eq!(stats.max, 1e153);
+        assert_eq!(stats.last, 1e153);
+        assert_eq!(stats.avg, 0.0);
+        assert_eq!(stats.var, 1e306);
+
+        // full set
+        let stats = agg.get_stats(2).unwrap();
+        assert_eq!(stats.min, -1e153);
+        assert_eq!(stats.max, 1e153);
+        assert_eq!(stats.last, 1e153);
+        assert_eq!(stats.avg, 3.3333333333333333e152);
+        assert_eq!(stats.var, 8.888888888888889e305);
     }
 
     #[test]
     fn test_skip_too_big_value_and_second() {
-        tracing_subscriber::fmt::init();
         let mut agg: SymbolAggregator<8, 2> = SymbolAggregator::new();
         let data = [
             f64::MAX, // this will be skipped
@@ -376,7 +398,7 @@ mod tests {
     #[test]
     fn test_big_stats() {
         let mut agg: SymbolAggregator<8, 2> = SymbolAggregator::new();
-        let data = generate_random_data(257, 3.14, 271.72, 457325.);
+        let data = super::generate_random_data(257, 3.14, 271.72, 457325.);
         agg.add_batch(&data);
 
         // two last elems
@@ -404,20 +426,21 @@ mod tests {
         assert_eq!(stats.max, d.to_vec().into_iter().reduce(f64::max).unwrap());
         assert_eq!(stats.last, data[data.len().wrapping_sub(1)]);
     }
+}
 
-    fn generate_random_data(n: usize, base: f64, drift: f64, volatility: f64) -> Vec<f64> {
-        use rand_distr::{Distribution, Normal};
-        let mut rng = rand::rng();
-        let normal = Normal::new(drift, volatility).unwrap();
+#[cfg(feature = "test")]
+pub fn generate_random_data(n: usize, base: f64, drift: f64, volatility: f64) -> Vec<f64> {
+    use rand_distr::{Distribution, Normal};
+    let mut rng = rand::rng();
+    let normal = Normal::new(drift, volatility).unwrap();
 
-        let mut prices = Vec::with_capacity(n);
-        let mut price = base;
-        for _ in 0..n {
-            let delta = normal.sample(&mut rng);
-            price += delta;
-            prices.push((price * 100.0).round() / 100.0); // round to 2 decimals
-        }
-
-        prices
+    let mut prices = Vec::with_capacity(n);
+    let mut price = base;
+    for _ in 0..n {
+        let delta = normal.sample(&mut rng);
+        price += delta;
+        prices.push((price * 100.0).round() / 100.0); // round to 2 decimals
     }
+
+    prices
 }

@@ -2,9 +2,6 @@ use crate::api::StatsResult;
 use crate::kahan::NeumaierSum;
 // use crate::monotonic_queue::MonotonicQueue;
 use crate::shared_monotonic_queue::{MaxCmp, MinCmp, SharedMonotonicQueue};
-// use accurate::sum::Neumaier;
-// use accurate::traits::SumAccumulator;
-use thiserror::Error;
 
 pub struct SymbolAggregator<const LEVELS: usize, const RADIX: usize> {
     buffer: Vec<f64>,
@@ -57,7 +54,15 @@ impl<const LEVELS: usize, const RADIX: usize> SymbolAggregator<LEVELS, RADIX> {
     ///
     /// We skip values which square root are too big (infinity).
     pub fn add_batch(&mut self, values: &[f64]) {
-        for &value in values {
+        for &val in values {
+            // tracing::info!("adding value: {value} @ {insert_index}");
+            let val_sq = val * val;
+            let max_sum_sq = (self.levels[LEVELS - 1].sum_sq.clone() + val_sq).sum();
+            if max_sum_sq.is_nan() || max_sum_sq.is_infinite() {
+                tracing::warn!("ignoring {val} since its square root brings sum to {max_sum_sq}");
+                continue;
+            }
+
             for level in self.levels.iter_mut() {
                 while level.count >= level.size {
                     // let evicted_index = self.index - level.size as u64;
@@ -88,20 +93,15 @@ impl<const LEVELS: usize, const RADIX: usize> SymbolAggregator<LEVELS, RADIX> {
                 idx
             };
 
-            // tracing::info!("adding value: {value} @ {insert_index}");
-            let sq_value = value * value;
-            if sq_value.is_nan() || sq_value.is_infinite() {
-                tracing::warn!("ignoring {value} since its square is {sq_value}");
-                continue;
-            }
-            self.buffer[insert_index] = value;
-            self.minq.push(self.index, value);
-            self.maxq.push(self.index, value);
+            self.buffer[insert_index] = val;
+            self.minq.push(self.index, val);
+            self.maxq.push(self.index, val);
             self.index += 1;
 
             for level in self.levels.iter_mut() {
-                level.sum += value;
-                level.sum_sq += sq_value;
+                level.sum += val;
+                level.sum_sq += val_sq;
+                // tracing::info!("sum_sq for {} is {}", level.size, level.sum_sq.sum());
                 level.count += 1;
                 // level.minq.push(self.index - 1, value);
                 // level.maxq.push(self.index - 1, value);
@@ -140,8 +140,10 @@ impl<const LEVELS: usize, const RADIX: usize> SymbolAggregator<LEVELS, RADIX> {
         let sum = level.sum.sum();
         let sum_sq = level.sum_sq.sum();
         let avg = sum / n;
-        // we might hit infinity here, in which case variance will not be provided in response
         let var = (sum_sq / n) - (avg * avg);
+        if var.is_infinite() || var.is_nan() {
+            tracing::warn!("variance not available: it is {var}");
+        }
         let last = self.buffer[(self.head + self.len - 1) % self.capacity];
         // let min1 = level.minq.best()?;
         // let max1 = level.maxq.best()?;

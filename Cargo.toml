@@ -5,16 +5,29 @@ edition = "2024"
 
 [dependencies]
 # accurate = "0.4.1"
-axum = "0.7"
+axum = "0.8"
 tokio = { version = "1.37", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-dashmap = "5.5"
+dashmap = "6.1"
+rand = { version = "0.9.0", optional = true }
+rand_distr = { version = "0.5.1", optional = true }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 thiserror = "2.0.12"
+anyhow = "1.0.98"
+
+[features]
+default = []
+test = ["rand", "rand_distr"]
+
+[[bench]]
+name = "benchmark"
+harness = false
 
 [dev-dependencies]
-rand = "0.9.0"
-rand_distr = "0.5.1"
+criterion = { version = "0.5", features = ["async", "async_tokio"] }
 tokio = { version = "1.37", features = ["full"] }
+hyper = "1"
+tower = { version = "0.5", features = ["util"] }
+serde_json = "1"

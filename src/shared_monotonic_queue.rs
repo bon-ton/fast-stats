@@ -30,6 +30,7 @@ pub struct SharedMonotonicQueue<C: Comparator, const LEVELS: usize, const RADIX:
 pub trait Comparator {
     fn better(new: f64, existing: f64) -> bool;
 
+    #[allow(dead_code)]
     fn name() -> &'static str;
 }
 
@@ -176,6 +177,7 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
             .and_then(|i| self.entries.get(i).map(|&(_, v)| v))
     }
 
+    #[allow(dead_code)]
     pub fn debug_best_indexes(&self) -> [Option<usize>; LEVELS] {
         std::array::from_fn(|i| self.views[i].best_idx)
     }

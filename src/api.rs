@@ -1,4 +1,5 @@
 use crate::app_state::SYMBOLS;
+use crate::error::Error;
 use crate::symbol_aggregator::SymbolAggregator;
 use axum::{
     extract::{Json, Query},
@@ -16,14 +17,19 @@ pub struct AddBatchRequest {
 }
 
 pub async fn add_batch(Json(payload): Json<AddBatchRequest>) -> impl IntoResponse {
+    if payload.values.len() > 10_000 {
+        return Err(Error::TooManyValues);
+    }
+
+    if payload.symbol.trim().is_empty() {
+        return Err(Error::InvalidRequest("Symbol is empty".into()));
+    }
+
     tracing::info!(
         "POST /add_batch/ - symbol: {}, values: {}",
         payload.symbol,
         payload.values.len()
     );
-    if payload.values.len() > 10_000 {
-        return (StatusCode::BAD_REQUEST, "Too many values").into_response();
-    }
 
     let entry = SYMBOLS
         .entry(payload.symbol.clone())
@@ -32,7 +38,7 @@ pub async fn add_batch(Json(payload): Json<AddBatchRequest>) -> impl IntoRespons
     let mut agg = entry.lock().unwrap();
     agg.add_batch(&payload.values);
 
-    (StatusCode::CREATED, Json(json!({ "status": "ok" }))).into_response()
+    Ok((StatusCode::CREATED, Json(json!({ "status": "ok" }))))
 }
 
 #[derive(Deserialize)]
@@ -56,11 +62,11 @@ pub async fn get_stats(Query(req): Query<StatsRequest>) -> impl IntoResponse {
     if let Some(entry) = SYMBOLS.get(&req.symbol) {
         let mut agg = entry.lock().unwrap();
         if let Some(stats) = agg.get_stats(req.k) {
-            return Json(stats).into_response();
+            return Ok(Json(stats));
         }
     }
 
-    let msg = format!("symbol {} not found or insufficient data", req.symbol);
-    tracing::warn!("{msg}");
-    (StatusCode::NOT_FOUND, msg).into_response()
+    let err = Error::SymbolNotFound(req.symbol);
+    tracing::warn!("{err}");
+    Err(err)
 }
