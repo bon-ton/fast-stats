@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn test_eviction() {
-        tracing_subscriber::fmt::init();
+        // tracing_subscriber::fmt::init();
 
         let mut agg: SymbolAggregator<3, 2> = SymbolAggregator::new();
         agg.add_batch(&[3., 1., 2., 4., 5.]);

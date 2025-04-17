@@ -92,7 +92,7 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         }
 
         if evicted {
-            tracing::info!("{}, validating evicted best indexs", C::name());
+            // tracing::info!("{}, validating evicted best indexs", C::name());
             // we do not need to update last LEVEL, because it is full queue
             for view in self.views.iter_mut().take(LEVELS - 1) {
                 if let Some(idx) = view.best_idx {

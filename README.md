@@ -56,6 +56,8 @@ Starts on http://localhost:3000.
 
 ### 🧪 Run all tests
 
+Includes correctness, eviction.
+
 ```bash
 cargo test --all-features
 ```
@@ -66,4 +68,44 @@ cargo test --all-features
 cargo bench --all-features
 ```
 
-Includes correctness, eviction, and performance-related test coverage.
+#### Benchmark results on M2 chip
+
+```txt
+add_batch_10k           time:   [429.63 µs 439.18 µs 450.89 µs]
+Found 10 outliers among 100 measurements (10.00%)
+  7 (7.00%) high mild
+  3 (3.00%) high severe
+
+get_stats_k=4           time:   [6.9251 ns 7.0494 ns 7.2196 ns]
+Found 7 outliers among 100 measurements (7.00%)
+  5 (5.00%) high mild
+  2 (2.00%) high severe
+
+get_stats_k=8           time:   [5.6252 ns 5.6837 ns 5.7524 ns]
+Found 9 outliers among 100 measurements (9.00%)
+  5 (5.00%) high mild
+  4 (4.00%) high severe
+
+add_and_get_stats_k=4   time:   [1.0665 ms 1.2443 ms 1.4579 ms]
+Found 6 outliers among 100 measurements (6.00%)
+  6 (6.00%) high mild
+
+add_and_get_stats_k=8   time:   [632.19 µs 667.88 µs 709.44 µs]
+Found 14 outliers among 100 measurements (14.00%)
+  9 (9.00%) high mild
+  5 (5.00%) high severe
+
+POST /add_batch         time:   [915.53 µs 925.08 µs 935.03 µs]
+Found 12 outliers among 100 measurements (12.00%)
+  9 (9.00%) high mild
+  3 (3.00%) high severe
+
+GET /stats?k=7          time:   [1.2768 µs 1.2890 µs 1.3002 µs]
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+GET /stats?k=8          time:   [1.2521 µs 1.2558 µs 1.2605 µs]
+Found 7 outliers among 100 measurements (7.00%)
+  4 (4.00%) high mild
+  3 (3.00%) high severe
+```
