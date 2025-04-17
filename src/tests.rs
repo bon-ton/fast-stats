@@ -42,6 +42,76 @@ mod tests {
     }
 
     #[test]
+    fn test_eviction() {
+        // tracing_subscriber::fmt::init();
+
+        let mut agg: SymbolAggregator<3, 2> = SymbolAggregator::new();
+        agg.add_batch(&[3., 1., 2., 4., 5.]);
+
+        // 2 last elems
+        let stats = agg.get_stats(1).unwrap();
+        assert_eq!(stats.min, 4.0);
+        assert_eq!(stats.max, 5.0);
+        assert_eq!(stats.last, 5.0);
+        assert_eq!(stats.avg, 4.5);
+        assert_eq!(stats.var, 0.25);
+
+        // 4 last elems
+        let stats = agg.get_stats(2).unwrap();
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 5.0);
+        assert_eq!(stats.last, 5.0);
+        assert_eq!(stats.avg, 3.0);
+        assert_eq!(stats.var, 2.5);
+
+        agg.add_batch(&[6., 8.]);
+
+        // 2 last elems
+        let stats = agg.get_stats(1).unwrap();
+        assert_eq!(stats.min, 6.0);
+        assert_eq!(stats.max, 8.0);
+        assert_eq!(stats.last, 8.0);
+        assert_eq!(stats.avg, 7.0);
+        assert_eq!(stats.var, 1.0);
+
+        // 4 last elems
+        let stats = agg.get_stats(2).unwrap();
+        assert_eq!(stats.min, 4.0);
+        assert_eq!(stats.max, 8.0);
+        assert_eq!(stats.last, 8.0);
+        assert_eq!(stats.avg, 5.75);
+        assert_eq!(stats.var, 2.1875);
+
+        // `1.0`, `2.0` should now be evicted from deque
+        // `3.0` is removed when pushing new `3.0`
+        agg.add_batch(&[3., 4., 5., 6., 7.]);
+
+        // 2 last elems
+        let stats = agg.get_stats(1).unwrap();
+        assert_eq!(stats.min, 6.0);
+        assert_eq!(stats.max, 7.0);
+        assert_eq!(stats.last, 7.0);
+        assert_eq!(stats.avg, 6.5);
+        assert_eq!(stats.var, 0.25);
+
+        // 4 last elems
+        let stats = agg.get_stats(2).unwrap();
+        assert_eq!(stats.min, 4.0);
+        assert_eq!(stats.max, 7.0);
+        assert_eq!(stats.last, 7.0);
+        assert_eq!(stats.avg, 5.5);
+        assert_eq!(stats.var, 1.25);
+
+        // full set, too big value skipped
+        let stats = agg.get_stats(3).unwrap();
+        assert_eq!(stats.min, 3.0);
+        assert_eq!(stats.max, 8.0);
+        assert_eq!(stats.last, 7.0);
+        assert_eq!(stats.avg, 5.5);
+        assert_eq!(stats.var, 2.25);
+    }
+
+    #[test]
     fn test_inf_values_skipped() {
         let mut agg: SymbolAggregator<2, 2> = SymbolAggregator::new();
         agg.add_batch(&[1e200, 1., 2.]);
@@ -93,7 +163,8 @@ mod tests {
 
     #[test]
     fn test_max_variance() {
-        tracing_subscriber::fmt::init();
+        // tracing_subscriber::fmt::init();
+
         let mut agg: SymbolAggregator<2, 2> = SymbolAggregator::new();
         agg.add_batch(&[1e153, -1e153, 1e153]);
 

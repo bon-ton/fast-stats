@@ -81,14 +81,26 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
 
     /// Enforces monotonic invariant: removes worse values from the back
     pub fn push(&mut self, index: u64, value: f64) {
-        while let Some(&(_idx, back_val)) = self.entries.back() {
+        while let Some(&(_, back_val)) = self.entries.back() {
             if C::better(value, back_val) {
-                // tracing::info!(
-                //     "{}, popped back value: ({_idx}, {back_val}) @ {}",
-                //     C::name(),
-                //     self.entries.len()
-                // );
+                // tracing::info!("{}, validating evicted best indexs", C::name());
                 self.entries.pop_back();
+
+                // we do not need to update last LEVEL, because it is full queue
+                for view in self.views.iter_mut().take(LEVELS - 1) {
+                    if let Some(idx) = view.best_idx {
+                        if self.entries.get(idx).is_none() {
+                            // best index was evicted; invalidate here as well
+                            // tracing::info!(
+                            //     "{}, invalidating evicted best index:{idx} level {}",
+                            //     C::name(),
+                            //     (view.window_size as f64).log2(),
+                            // );
+
+                            view.best_idx = None;
+                        }
+                    }
+                }
             } else {
                 break;
             }
@@ -109,29 +121,36 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         let oldest_allowed = current_index.saturating_sub(max_window);
 
         // tracing::info!(
-        //     "{}, evicting older than: {oldest_allowed} out of {}",
+        //     "{}, evicting older than: {oldest_allowed} out of {:?}",
         //     C::name(),
-        //     self.entries.len()
+        //     self.entries
         // );
+        let mut invalidate_cache = false;
         while let Some(&(idx, _)) = self.entries.front() {
             if idx < oldest_allowed {
                 self.entries.pop_front();
-
-                // we do not need to update last LEVEL, because it is full queue
-                for view in self.views.iter_mut().take(LEVELS - 1) {
-                    let min_index = current_index.saturating_sub(view.window_size);
-
-                    if let Some(idx) = view.best_idx {
-                        if let Some((index, _)) = self.entries.get(idx) {
-                            if *index <= min_index {
-                                // invalidate best index; will be set by `best_or_refresh`
-                                view.best_idx = None;
-                            }
-                        }
-                    }
-                }
+                invalidate_cache = true;
             } else {
                 break;
+            }
+        }
+
+        // tracing::info!("{}, validating too old best indexs", C::name());
+        // we do not need to update last LEVEL, because it is full queue
+        for view in self.views.iter_mut().take(LEVELS - 1) {
+            let min_index = current_index.saturating_sub(view.window_size);
+            if let Some(idx) = view.best_idx {
+                if let Some((index, _)) = self.entries.get(idx) {
+                    if invalidate_cache || *index < min_index {
+                        // invalidate best index as too old; will be set by `best_or_refresh`
+                        // tracing::info!(
+                        //     "{}, invalidating too old best index:{idx} level {}",
+                        //     C::name(),
+                        //     (view.window_size as f64).log2(),
+                        // );
+                        view.best_idx = None;
+                    }
+                }
             }
         }
     }
@@ -152,7 +171,12 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
 
         if let Some(idx) = view.best_idx {
             if let Some((index, value)) = self.entries.get(idx) {
-                if *index > min_index {
+                if *index >= min_index {
+                    // tracing::info!(
+                    //     "smq cached best index:{idx} for {} level {level}: {:?}",
+                    //     C::name(),
+                    //     self.entries
+                    // );
                     return Some(*value);
                 }
             }
