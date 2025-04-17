@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 /// I was considering maintaining best indexes in `push` operation, but given that
 /// batches size are at most `10^4` and highest level is `10^8`, we should expect much
 /// more `push`es than statistic retrievals. So I decided to just invalidate best indexes
-/// in `evict_older_than` and restore them on demand in `best_or_refresh`. This should
+/// in `evict` and restore them lazily in `best_or_refresh` with caching. This should
 /// have much better amortised time complexity, than refreshing in `push`, or even after
 /// a batch.
 ///

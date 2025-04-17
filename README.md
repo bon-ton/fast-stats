@@ -68,6 +68,16 @@ cargo test --all-features
 cargo bench --all-features
 ```
 
+Criterion generates a full HTML report you can open in a browser:
+
+```zsh
+open target/criterion/report/index.html   # macOS
+```
+
+```bash
+xdg-open target/criterion/report/index.html  # Linux
+```
+
 #### Benchmark results on M2 chip
 
 ```txt
