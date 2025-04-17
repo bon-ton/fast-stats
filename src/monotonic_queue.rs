@@ -1,3 +1,4 @@
+//! this module is superseded by shared_monotonic_queue
 use crate::shared_monotonic_queue::Comparator;
 use std::collections::VecDeque;
 use std::marker::PhantomData;

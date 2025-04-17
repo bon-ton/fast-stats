@@ -1,56 +1,61 @@
 use crate::api::StatsResult;
-use crate::kahan::KahanSum;
-use crate::monotonic_queue::MonotonicQueue;
+use crate::kahan::NeumaierSum;
+// use crate::monotonic_queue::MonotonicQueue;
 use crate::shared_monotonic_queue::{MaxCmp, MinCmp, SharedMonotonicQueue};
+// use accurate::sum::Neumaier;
+// use accurate::traits::SumAccumulator;
+use thiserror::Error;
 
-pub struct SymbolAggregator {
+pub struct SymbolAggregator<const LEVELS: usize, const RADIX: usize> {
     buffer: Vec<f64>,
     capacity: usize,
     head: usize,
     len: usize,
     index: u64,
-    levels: [LevelStats; 8],
-    minq: SharedMonotonicQueue<MinCmp>,
-    maxq: SharedMonotonicQueue<MaxCmp>,
+    levels: [LevelStats; LEVELS],
+    minq: SharedMonotonicQueue<MinCmp, LEVELS, RADIX>,
+    maxq: SharedMonotonicQueue<MaxCmp, LEVELS, RADIX>,
 }
 
 pub struct LevelStats {
     pub size: usize,
     pub count: usize,
-    pub sum: KahanSum,
-    pub sum_sq: KahanSum,
+    pub sum: NeumaierSum,
+    pub sum_sq: NeumaierSum,
     // pub minq: MonotonicQueue<MinCmp>,
     // pub maxq: MonotonicQueue<MaxCmp>,
 }
 
-impl SymbolAggregator {
+impl<const LEVELS: usize, const RADIX: usize> SymbolAggregator<LEVELS, RADIX> {
     pub fn new() -> Self {
-        const MAX_K: usize = 8;
-        const MAX_CAPACITY: usize = 2usize.pow(MAX_K as u32);
-        let sizes = std::array::from_fn(|i| 2u64.pow((i + 1) as u32));
+        let capacity = RADIX.pow(LEVELS as u32);
+        let sizes = std::array::from_fn(|i| (RADIX as u64).pow((i + 1) as u32));
 
         Self {
-            buffer: vec![0.0; MAX_CAPACITY],
-            capacity: MAX_CAPACITY,
+            buffer: vec![0.0; capacity],
+            capacity,
             head: 0,
             len: 0,
             index: 0,
             levels: std::array::from_fn(|i| {
-                let size = 2usize.pow((i + 1) as u32);
+                let size = RADIX.pow((i + 1) as u32);
                 LevelStats {
                     size,
                     count: 0,
-                    sum: KahanSum::new(),
-                    sum_sq: KahanSum::new(),
+                    sum: 0f64.into(),
+                    sum_sq: 0f64.into(),
                     // minq: MonotonicQueue::new(),
                     // maxq: MonotonicQueue::new(),
                 }
             }),
-            minq: SharedMonotonicQueue::<MinCmp>::new(sizes),
-            maxq: SharedMonotonicQueue::<MaxCmp>::new(sizes),
+            minq: SharedMonotonicQueue::<MinCmp, LEVELS, RADIX>::new(sizes),
+            maxq: SharedMonotonicQueue::<MaxCmp, LEVELS, RADIX>::new(sizes),
         }
     }
 
+    /// Add values to the batch.
+    ///
+    /// We skip values which square root are too big (infinity).
     pub fn add_batch(&mut self, values: &[f64]) {
         for &value in values {
             for level in self.levels.iter_mut() {
@@ -65,8 +70,8 @@ impl SymbolAggregator {
                     //     level.size,
                     // );
 
-                    level.sum.sub(old_value);
-                    level.sum_sq.sub(old_value * old_value);
+                    level.sum += -old_value;
+                    level.sum_sq += -(old_value * old_value);
                     level.count -= 1;
                 }
             }
@@ -84,19 +89,23 @@ impl SymbolAggregator {
             };
 
             // tracing::info!("adding value: {value} @ {insert_index}");
+            let sq_value = value * value;
+            if sq_value.is_nan() || sq_value.is_infinite() {
+                tracing::warn!("ignoring {value} since its square is {sq_value}");
+                continue;
+            }
             self.buffer[insert_index] = value;
+            self.minq.push(self.index, value);
+            self.maxq.push(self.index, value);
             self.index += 1;
 
             for level in self.levels.iter_mut() {
-                level.sum.add(value);
-                level.sum_sq.add(value * value);
+                level.sum += value;
+                level.sum_sq += sq_value;
                 level.count += 1;
                 // level.minq.push(self.index - 1, value);
                 // level.maxq.push(self.index - 1, value);
             }
-
-            self.minq.push(self.index - 1, value);
-            self.maxq.push(self.index - 1, value);
         }
 
         // for level in self.levels.iter_mut() {
@@ -109,8 +118,13 @@ impl SymbolAggregator {
         self.maxq.evict_older_than(self.index);
     }
 
+    /// Get stats for given level `k`.
+    ///
+    /// We might hit infinity when calculating variance. In such a case `var` will
+    /// be `null` in response. Later when too big values are evicted, `var` will be
+    /// returned again.
     pub fn get_stats(&mut self, k: u32) -> Option<StatsResult> {
-        if !(1..=8).contains(&k) {
+        if !(1..=LEVELS as u32).contains(&k) {
             return None;
         }
 
@@ -123,21 +137,22 @@ impl SymbolAggregator {
         // self.maxq.refresh_best((k - 1) as usize, self.index);
 
         let n = level.count as f64;
-        let sum = level.sum.get();
-        let sum_sq = level.sum_sq.get();
+        let sum = level.sum.sum();
+        let sum_sq = level.sum_sq.sum();
         let avg = sum / n;
+        // we might hit infinity here, in which case variance will not be provided in response
         let var = (sum_sq / n) - (avg * avg);
         let last = self.buffer[(self.head + self.len - 1) % self.capacity];
         // let min1 = level.minq.best()?;
         // let max1 = level.maxq.best()?;
 
-        let min = self.minq.best((k - 1) as usize)?;
-        let max = self.maxq.best((k - 1) as usize)?;
+        let min = self.minq.best_or_refresh((k - 1) as usize, self.index)?;
+        let max = self.maxq.best_or_refresh((k - 1) as usize, self.index)?;
 
         // assert_eq!(min, min1);
         // assert_eq!(max, max1);
 
-        tracing::info!("get_stats: count: {n} sum: {sum} for size: {}", level.size);
+        // tracing::info!("get_stats: count: {n} sum: {sum} for size: {}", level.size);
         // tracing::info!(
         //     "get_stats: min best indexes: {:?}",
         //     self.minq.debug_best_indexes()
