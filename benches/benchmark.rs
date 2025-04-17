@@ -5,13 +5,30 @@ use axum::{
 use criterion::{criterion_group, criterion_main, Criterion};
 use fast_stats::build_app;
 use fast_stats::symbol_aggregator::SymbolAggregator;
+use fast_stats::tests::generate_random_data;
 use serde_json::json;
 use tower::ServiceExt;
 
 fn bench_add_batch(c: &mut Criterion) {
     let mut aggregator = SymbolAggregator::<8, 10>::new();
 
-    let values: Vec<f64> = (0..10_000).map(|i| 100.0 + (i as f64 * 0.01)).collect();
+    let values = generate_random_data(100, 314.15, 27.172, 4573.25);
+
+    c.bench_function("add_batch_100", |b| {
+        b.iter(|| {
+            aggregator.add_batch(&values);
+        })
+    });
+
+    let values = generate_random_data(1000, 314.15, 27.172, 4573.25);
+
+    c.bench_function("add_batch_1k", |b| {
+        b.iter(|| {
+            aggregator.add_batch(&values);
+        })
+    });
+
+    let values = generate_random_data(10_000, 314.15, 27.172, 4573.25);
 
     c.bench_function("add_batch_10k", |b| {
         b.iter(|| {
@@ -23,7 +40,7 @@ fn bench_add_batch(c: &mut Criterion) {
 fn bench_get_stats(c: &mut Criterion) {
     let mut aggregator = SymbolAggregator::<8, 10>::new();
 
-    let values = fast_stats::tests::generate_random_data(100_000_000, 3.14, 271.72, 457325.);
+    let values = generate_random_data(100_000_000, 3.14, 271.72, 457325.);
 
     for chunk in values.chunks(10_000) {
         aggregator.add_batch(chunk);
@@ -41,7 +58,7 @@ fn bench_get_stats(c: &mut Criterion) {
         })
     });
 
-    let values = fast_stats::tests::generate_random_data(10_000, 314.15, 27.172, 4573.25);
+    let values = generate_random_data(10_000, 314.15, 27.172, 4573.25);
 
     c.bench_function("add_and_get_stats_k=4", |b| {
         b.iter(|| {
@@ -64,10 +81,35 @@ fn bench_http_add_batch(c: &mut Criterion) {
 
     let payload = json!({
         "symbol": "ABC",
-        "values": (0..10_000).map(|i| 100.0 + i as f64 * 0.01).collect::<Vec<_>>()
+        "values": generate_random_data(1_000, 314.15, 27.172, 4573.25)
     });
 
-    c.bench_function("POST /add_batch", |b| {
+    c.bench_function("POST /add_batch/1k", |b| {
+        b.to_async(&rt).iter(|| async {
+            let body = Body::from(serde_json::to_vec(&payload).unwrap());
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/add_batch/")
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::CREATED);
+        });
+    });
+
+    let payload = json!({
+        "symbol": "ABC",
+        "values": generate_random_data(10_000, 314.15, 27.172, 4573.25)
+    });
+
+    c.bench_function("POST /add_batch/10k", |b| {
         b.to_async(&rt).iter(|| async {
             let body = Body::from(serde_json::to_vec(&payload).unwrap());
             let response = app
@@ -96,7 +138,7 @@ fn bench_http_get_stats(c: &mut Criterion) {
         // Seed some data first
         let payload = json!({
             "symbol": "ABC",
-            "values": (0..1_000_000).map(|i| 100.0 + i as f64 * 0.01).collect::<Vec<_>>()
+            "values": generate_random_data(10_000, 314.15, 27.172, 4573.25)
         });
 
         let _ = app

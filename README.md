@@ -12,7 +12,7 @@ single node processing.
 - `O(1)` or worst-case `O(log n)` performance,
   for `n` number of strictly monotonic sub-sequence
 - Fully in-memory — fast, no persistent storage
-    - `O(n)` space complexity, with small constant (~`3`)
+    - `O(n)` space complexity, with small constant (~`2`)
 - Numerical stability
   with [Kahan–Babuška algorithm improved by Neumaier](https://en.wikipedia.org/wiki/Kahan_summation_algorithm)
     - Values up to `1e153` are supported, larger are skipped (ignored)
@@ -71,41 +71,19 @@ cargo bench --all-features
 #### Benchmark results on M2 chip
 
 ```txt
-add_batch_10k           time:   [429.63 µs 439.18 µs 450.89 µs]
-Found 10 outliers among 100 measurements (10.00%)
-  7 (7.00%) high mild
-  3 (3.00%) high severe
+add_batch_100           time:   [5.9548 µs 6.4105 µs 7.1221 µs]
+add_batch_1k            time:   [71.809 µs 75.399 µs 79.709 µs]
+add_batch_10k           time:   [676.22 µs 712.48 µs 754.33 µs]
 
-get_stats_k=4           time:   [6.9251 ns 7.0494 ns 7.2196 ns]
-Found 7 outliers among 100 measurements (7.00%)
-  5 (5.00%) high mild
-  2 (2.00%) high severe
+get_stats_k=4           time:   [10.635 ns 10.690 ns 10.758 ns]
+get_stats_k=8           time:   [9.6433 ns 10.259 ns 11.086 ns]
 
-get_stats_k=8           time:   [5.6252 ns 5.6837 ns 5.7524 ns]
-Found 9 outliers among 100 measurements (9.00%)
-  5 (5.00%) high mild
-  4 (4.00%) high severe
+add_and_get_stats_k=4   time:   [1.0651 ms 1.1112 ms 1.1589 ms]
+add_and_get_stats_k=8   time:   [774.93 µs 813.75 µs 860.32 µs]
 
-add_and_get_stats_k=4   time:   [1.0665 ms 1.2443 ms 1.4579 ms]
-Found 6 outliers among 100 measurements (6.00%)
-  6 (6.00%) high mild
+POST /add_batch/1k      time:   [130.86 µs 141.78 µs 153.65 µs]
+POST /add_batch/10k     time:   [1.3755 ms 1.4271 ms 1.4882 ms]
 
-add_and_get_stats_k=8   time:   [632.19 µs 667.88 µs 709.44 µs]
-Found 14 outliers among 100 measurements (14.00%)
-  9 (9.00%) high mild
-  5 (5.00%) high severe
-
-POST /add_batch         time:   [915.53 µs 925.08 µs 935.03 µs]
-Found 12 outliers among 100 measurements (12.00%)
-  9 (9.00%) high mild
-  3 (3.00%) high severe
-
-GET /stats?k=7          time:   [1.2768 µs 1.2890 µs 1.3002 µs]
-Found 1 outliers among 100 measurements (1.00%)
-  1 (1.00%) high mild
-
-GET /stats?k=8          time:   [1.2521 µs 1.2558 µs 1.2605 µs]
-Found 7 outliers among 100 measurements (7.00%)
-  4 (4.00%) high mild
-  3 (3.00%) high severe
+GET /stats?k=7          time:   [1.3151 µs 1.3426 µs 1.3744 µs]
+GET /stats?k=8          time:   [1.3048 µs 1.3525 µs 1.4106 µs]
 ```

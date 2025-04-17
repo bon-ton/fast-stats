@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-/// Monotonic ring of values ordered by given `Comparator`.
+/// Strictly monotonic ring of values ordered by given `Comparator`.
 ///
 /// Allows getting `min` or `max` value for the highest level in `O(1)` time.
 /// Other levels have worst-case `O(log n)`, where `n` is number of entries in top level,
@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 ///
 /// ## Impl note
 /// Stores tuples of (logical_index, value) monotonically ordered.
-/// Equal values are not stored.
+/// Equal values are not stored. New equal value evicts old one.
 ///
 /// Logical index is not reset. `u64::MAX` is big enough for the server to operate
 /// for few hundred years, even under heavy load, until it will overflow.
@@ -28,8 +28,11 @@ pub struct SharedMonotonicQueue<C: Comparator, const LEVELS: usize, const RADIX:
 
 /// Trait for comparing values in monotonic queues
 pub trait Comparator {
+    /// What `better` means for given stat.
+    /// Used to decide weather to evict value from the deque back.
     fn better(new: f64, existing: f64) -> bool;
 
+    /// for debugging
     #[allow(dead_code)]
     fn name() -> &'static str;
 }
@@ -37,6 +40,7 @@ pub trait Comparator {
 pub struct MinCmp;
 pub struct MaxCmp;
 
+/// `min` comparator
 impl Comparator for MinCmp {
     fn better(new: f64, existing: f64) -> bool {
         new <= existing
@@ -46,6 +50,7 @@ impl Comparator for MinCmp {
         "min"
     }
 }
+/// `max` comparator
 impl Comparator for MaxCmp {
     fn better(new: f64, existing: f64) -> bool {
         new >= existing
@@ -59,6 +64,8 @@ impl Comparator for MaxCmp {
 /// View for levels lower than the maximum one.
 #[derive(Clone, Copy)]
 pub struct LevelView {
+    /// number of the level, used for debug
+    id: usize,
     /// size of the window for given level
     pub window_size: u64,
     /// if `Some` it keeps the index of entry for best value in given level
@@ -72,6 +79,7 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         Self {
             entries: VecDeque::new(),
             views: std::array::from_fn(|i| LevelView {
+                id: i,
                 window_size: window_sizes[i],
                 best_idx: None,
             }),
@@ -79,8 +87,11 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         }
     }
 
-    /// Enforces monotonic invariant: removes worse values from the back
-    pub fn push(&mut self, index: u64, value: f64) {
+    /// Pushes single value to the `deque` preserving strict monotonic invariant.
+    ///
+    /// Evicts (from the back) all values worse than given one.
+    /// In case of eviction, updates or sets minimum index of evicted value.
+    pub fn push(&mut self, index: u64, value: f64, min_evicted_idx: &mut Option<usize>) {
         let mut evicted = false;
         while let Some(&(_, back_val)) = self.entries.back() {
             if C::better(value, back_val) {
@@ -92,42 +103,56 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         }
 
         if evicted {
-            // tracing::info!("{}, validating evicted best indexs", C::name());
+            let new_idx = self.entries.len();
+            let min_evicted_idx = min_evicted_idx.get_or_insert(new_idx);
+            if new_idx < *min_evicted_idx {
+                *min_evicted_idx = new_idx;
+            }
+        }
+
+        tracing::debug!(
+            "{}, pushing: value: ({index}, {value}) @ {}",
+            C::name(),
+            self.entries.len()
+        );
+        self.entries.push_back((index, value));
+    }
+
+    /// Evicts values from the front of the `deque`, if are too old,
+    /// based on `current_index` and top level window size.
+    ///
+    /// Invalidates best indexes for lower level views if needed, based on `min_evicted_idx`
+    pub fn evict(&mut self, current_index: u64, min_evicted_idx: Option<usize>) {
+        // first invalidate level best indexes cache if needed
+        if let Some(min_evicted_idx) = min_evicted_idx {
+            tracing::debug!(
+                "{}, validating push-evicted best indexes before {min_evicted_idx}",
+                C::name()
+            );
             // we do not need to update last LEVEL, because it is full queue
             for view in self.views.iter_mut().take(LEVELS - 1) {
                 if let Some(idx) = view.best_idx {
-                    if self.entries.get(idx).is_none() {
-                        // best index was evicted; invalidate here as well
-                        // tracing::info!(
-                        //     "{}, invalidating evicted best index:{idx} level {}",
-                        //     C::name(),
-                        //     (view.window_size as f64).log2(),
-                        // );
+                    if idx < min_evicted_idx {
+                        tracing::debug!(
+                            "{}, invalidating push-evicted best index:{idx} level {}",
+                            C::name(),
+                            view.id,
+                        );
                         view.best_idx = None;
                     }
                 }
             }
         }
 
-        // tracing::info!(
-        //     "{}, pushing value: ({index}, {value}) @ {}",
-        //     C::name(),
-        //     self.entries.len()
-        // );
-        self.entries.push_back((index, value));
-    }
-
-    /// Evicts values from the front if too old for max level.
-    /// Invalidates best indexes for lower level views if needed.
-    pub fn evict_older_than(&mut self, current_index: u64) {
+        // now evict to old values
         let max_window = RADIX.pow(LEVELS as u32) as u64;
         let oldest_allowed = current_index.saturating_sub(max_window);
 
-        // tracing::info!(
-        //     "{}, evicting older than: {oldest_allowed} out of {:?}",
-        //     C::name(),
-        //     self.entries
-        // );
+        tracing::trace!(
+            "{}, evicting older than: {oldest_allowed} out of {:?}",
+            C::name(),
+            self.entries
+        );
         let mut front_evicted = 0usize;
         while let Some(&(idx, _)) = self.entries.front() {
             if idx < oldest_allowed {
@@ -139,11 +164,11 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         }
 
         if front_evicted > 0 {
-            // tracing::info!(
-            //     "{}, evicted {front_evicted} from front, validating too old best indexes: {:?}",
-            //     C::name(),
-            //     self.debug_best_indexes(),
-            // );
+            tracing::debug!(
+                "{}, evicted: {front_evicted} from front, validating too old best indexes: {:?}",
+                C::name(),
+                self.debug_best_indexes(),
+            );
             // we do not need to update last LEVEL, because it is full queue
             for view in self.views.iter_mut().take(LEVELS - 1) {
                 let min_index = current_index.saturating_sub(view.window_size);
@@ -152,11 +177,11 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
                     if let Some((index, _)) = self.entries.get(*idx) {
                         if *index < min_index {
                             // invalidate best index as too old; will be set by `best_or_refresh`
-                            // tracing::info!(
-                            //     "{}, invalidating too old best index:{idx} level {}",
-                            //     C::name(),
-                            //     (view.window_size as f64).log2(),
-                            // );
+                            tracing::debug!(
+                                "{}, evicted: invalidating too old best index:{idx} level {}",
+                                C::name(),
+                                view.id,
+                            );
                             view.best_idx = None;
                         }
                     }
@@ -172,21 +197,31 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
     pub fn best_or_refresh(&mut self, level: usize, current_index: u64) -> Option<f64> {
         if level == LEVELS - 1 {
             let front = self.entries.front();
-            // tracing::info!("{}, front: {:?} of {:?}", C::name(), front, self.entries);
+            tracing::debug!(
+                "{}, best: front: {:?} of {:?}",
+                C::name(),
+                front,
+                self.entries
+            );
             return front.map(|&(_, v)| v);
         }
 
         let view = &mut self.views[level];
         let min_index = current_index.saturating_sub(view.window_size);
 
+        tracing::trace!(
+            "{}, checking cached best index:{:?} level {level}",
+            C::name(),
+            view.best_idx,
+        );
         if let Some(idx) = view.best_idx {
             if let Some((index, value)) = self.entries.get(idx) {
                 if *index >= min_index {
-                    // tracing::info!(
-                    //     "{}, smq cached best index:{idx} level {level}: {:?}",
-                    //     C::name(),
-                    //     self.entries
-                    // );
+                    tracing::debug!(
+                        "{}, best: cached index:{idx} level {level}: {:?}",
+                        C::name(),
+                        self.entries
+                    );
                     return Some(*value);
                 }
             }
@@ -200,12 +235,12 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
             Err(idx) => view.best_idx = Some(idx),
         }
 
-        // tracing::info!(
-        //     "{}, smq best index:{} level {level}: {:?}",
-        //     C::name(),
-        //     view.best_idx.unwrap(),
-        //     self.entries
-        // );
+        tracing::debug!(
+            "{}, best: index:{} level {level}: {:?}",
+            C::name(),
+            view.best_idx.expect("set just above"),
+            self.entries
+        );
         self.views[level]
             .best_idx
             .and_then(|i| self.entries.get(i).map(|&(_, v)| v))
