@@ -163,9 +163,6 @@ impl<const LEVELS: usize, const RADIX: usize> SymbolAggregator<LEVELS, RADIX> {
         //     "get_stats: max best indexes: {:?}",
         //     self.maxq.debug_best_indexes()
         // );
-        // let end = (self.head + self.len) % self.capacity;
-        // let beg = (end + self.capacity - level.count) % self.capacity;
-        // tracing::info!("values: {:?}", &self.buffer[beg..end]);
 
         Some(StatsResult {
             min,

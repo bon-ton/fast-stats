@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn test_eviction() {
-        // tracing_subscriber::fmt::init();
+        tracing_subscriber::fmt::init();
 
         let mut agg: SymbolAggregator<3, 2> = SymbolAggregator::new();
         agg.add_batch(&[3., 1., 2., 4., 5.]);
@@ -64,27 +64,42 @@ mod tests {
         assert_eq!(stats.avg, 3.0);
         assert_eq!(stats.var, 2.5);
 
-        agg.add_batch(&[6., 8.]);
+        // full set
+        let stats = agg.get_stats(3).unwrap();
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 5.0);
+        assert_eq!(stats.last, 5.0);
+        assert_eq!(stats.avg, 3.0);
+        assert_eq!(stats.var, 2.0);
+
+        agg.add_batch(&[6., 9.]);
 
         // 2 last elems
         let stats = agg.get_stats(1).unwrap();
         assert_eq!(stats.min, 6.0);
-        assert_eq!(stats.max, 8.0);
-        assert_eq!(stats.last, 8.0);
-        assert_eq!(stats.avg, 7.0);
-        assert_eq!(stats.var, 1.0);
+        assert_eq!(stats.max, 9.0);
+        assert_eq!(stats.last, 9.0);
+        assert_eq!(stats.avg, 7.5);
+        assert_eq!(stats.var, 2.25);
 
         // 4 last elems
         let stats = agg.get_stats(2).unwrap();
         assert_eq!(stats.min, 4.0);
-        assert_eq!(stats.max, 8.0);
-        assert_eq!(stats.last, 8.0);
-        assert_eq!(stats.avg, 5.75);
-        assert_eq!(stats.var, 2.1875);
+        assert_eq!(stats.max, 9.0);
+        assert_eq!(stats.last, 9.0);
+        assert_eq!(stats.avg, 6.0);
+        assert_eq!(stats.var, 3.5);
 
-        // `1.0`, `2.0` should now be evicted from deque
-        // `3.0` is removed when pushing new `3.0`
-        agg.add_batch(&[3., 4., 5., 6., 7.]);
+        // full set
+        let stats = agg.get_stats(3).unwrap();
+        assert_eq!(stats.min, 1.0);
+        assert_eq!(stats.max, 9.0);
+        assert_eq!(stats.last, 9.0);
+        assert_eq!(stats.avg, 4.285714285714286);
+        assert_eq!(stats.var, 6.204081632653065);
+
+        // `1.0` should now be evicted from all buffers
+        agg.add_batch(&[5., 6., 7.]);
 
         // 2 last elems
         let stats = agg.get_stats(1).unwrap();
@@ -96,19 +111,46 @@ mod tests {
 
         // 4 last elems
         let stats = agg.get_stats(2).unwrap();
-        assert_eq!(stats.min, 4.0);
-        assert_eq!(stats.max, 7.0);
+        assert_eq!(stats.min, 5.0);
+        assert_eq!(stats.max, 9.0);
+        assert_eq!(stats.last, 7.0);
+        assert_eq!(stats.avg, 6.75);
+        assert_eq!(stats.var, 2.1875);
+
+        // full set
+        let stats = agg.get_stats(3).unwrap();
+        assert_eq!(stats.min, 2.0);
+        assert_eq!(stats.max, 9.0);
         assert_eq!(stats.last, 7.0);
         assert_eq!(stats.avg, 5.5);
+        assert_eq!(stats.var, 3.75);
+
+        // `2.0` should now be evicted from all buffers
+        agg.add_batch(&[8.]);
+
+        // 2 last elems
+        let stats = agg.get_stats(1).unwrap();
+        assert_eq!(stats.min, 7.0);
+        assert_eq!(stats.max, 8.0);
+        assert_eq!(stats.last, 8.0);
+        assert_eq!(stats.avg, 7.5);
+        assert_eq!(stats.var, 0.25);
+
+        // 4 last elems
+        let stats = agg.get_stats(2).unwrap();
+        assert_eq!(stats.min, 5.0);
+        assert_eq!(stats.max, 8.0);
+        assert_eq!(stats.last, 8.0);
+        assert_eq!(stats.avg, 6.5);
         assert_eq!(stats.var, 1.25);
 
-        // full set, too big value skipped
+        // full set
         let stats = agg.get_stats(3).unwrap();
-        assert_eq!(stats.min, 3.0);
-        assert_eq!(stats.max, 8.0);
-        assert_eq!(stats.last, 7.0);
-        assert_eq!(stats.avg, 5.5);
-        assert_eq!(stats.var, 2.25);
+        assert_eq!(stats.min, 4.0);
+        assert_eq!(stats.max, 9.0);
+        assert_eq!(stats.last, 8.0);
+        assert_eq!(stats.avg, 6.25);
+        assert_eq!(stats.var, 2.4375);
     }
 
     #[test]

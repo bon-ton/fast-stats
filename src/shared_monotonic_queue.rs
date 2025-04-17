@@ -81,28 +81,31 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
 
     /// Enforces monotonic invariant: removes worse values from the back
     pub fn push(&mut self, index: u64, value: f64) {
+        let mut evicted = false;
         while let Some(&(_, back_val)) = self.entries.back() {
             if C::better(value, back_val) {
-                // tracing::info!("{}, validating evicted best indexs", C::name());
                 self.entries.pop_back();
-
-                // we do not need to update last LEVEL, because it is full queue
-                for view in self.views.iter_mut().take(LEVELS - 1) {
-                    if let Some(idx) = view.best_idx {
-                        if self.entries.get(idx).is_none() {
-                            // best index was evicted; invalidate here as well
-                            // tracing::info!(
-                            //     "{}, invalidating evicted best index:{idx} level {}",
-                            //     C::name(),
-                            //     (view.window_size as f64).log2(),
-                            // );
-
-                            view.best_idx = None;
-                        }
-                    }
-                }
+                evicted = true;
             } else {
                 break;
+            }
+        }
+
+        if evicted {
+            tracing::info!("{}, validating evicted best indexs", C::name());
+            // we do not need to update last LEVEL, because it is full queue
+            for view in self.views.iter_mut().take(LEVELS - 1) {
+                if let Some(idx) = view.best_idx {
+                    if self.entries.get(idx).is_none() {
+                        // best index was evicted; invalidate here as well
+                        // tracing::info!(
+                        //     "{}, invalidating evicted best index:{idx} level {}",
+                        //     C::name(),
+                        //     (view.window_size as f64).log2(),
+                        // );
+                        view.best_idx = None;
+                    }
+                }
             }
         }
 
@@ -125,30 +128,37 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         //     C::name(),
         //     self.entries
         // );
-        let mut invalidate_cache = false;
+        let mut front_evicted = 0usize;
         while let Some(&(idx, _)) = self.entries.front() {
             if idx < oldest_allowed {
                 self.entries.pop_front();
-                invalidate_cache = true;
+                front_evicted += 1;
             } else {
                 break;
             }
         }
 
-        // tracing::info!("{}, validating too old best indexs", C::name());
-        // we do not need to update last LEVEL, because it is full queue
-        for view in self.views.iter_mut().take(LEVELS - 1) {
-            let min_index = current_index.saturating_sub(view.window_size);
-            if let Some(idx) = view.best_idx {
-                if let Some((index, _)) = self.entries.get(idx) {
-                    if invalidate_cache || *index < min_index {
-                        // invalidate best index as too old; will be set by `best_or_refresh`
-                        // tracing::info!(
-                        //     "{}, invalidating too old best index:{idx} level {}",
-                        //     C::name(),
-                        //     (view.window_size as f64).log2(),
-                        // );
-                        view.best_idx = None;
+        if front_evicted > 0 {
+            // tracing::info!(
+            //     "{}, evicted {front_evicted} from front, validating too old best indexes: {:?}",
+            //     C::name(),
+            //     self.debug_best_indexes(),
+            // );
+            // we do not need to update last LEVEL, because it is full queue
+            for view in self.views.iter_mut().take(LEVELS - 1) {
+                let min_index = current_index.saturating_sub(view.window_size);
+                if let Some(ref mut idx) = view.best_idx {
+                    *idx -= front_evicted;
+                    if let Some((index, _)) = self.entries.get(*idx) {
+                        if *index < min_index {
+                            // invalidate best index as too old; will be set by `best_or_refresh`
+                            // tracing::info!(
+                            //     "{}, invalidating too old best index:{idx} level {}",
+                            //     C::name(),
+                            //     (view.window_size as f64).log2(),
+                            // );
+                            view.best_idx = None;
+                        }
                     }
                 }
             }
@@ -162,7 +172,7 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
     pub fn best_or_refresh(&mut self, level: usize, current_index: u64) -> Option<f64> {
         if level == LEVELS - 1 {
             let front = self.entries.front();
-            // tracing::info!("front: {:?} of {:?}", front, self.entries);
+            // tracing::info!("{}, front: {:?} of {:?}", C::name(), front, self.entries);
             return front.map(|&(_, v)| v);
         }
 
@@ -173,7 +183,7 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
             if let Some((index, value)) = self.entries.get(idx) {
                 if *index >= min_index {
                     // tracing::info!(
-                    //     "smq cached best index:{idx} for {} level {level}: {:?}",
+                    //     "{}, smq cached best index:{idx} level {level}: {:?}",
                     //     C::name(),
                     //     self.entries
                     // );
@@ -191,9 +201,9 @@ impl<C: Comparator, const LEVELS: usize, const RADIX: usize>
         }
 
         // tracing::info!(
-        //     "smq best index:{} for {} level {level}: {:?}",
-        //     view.best_idx.unwrap(),
+        //     "{}, smq best index:{} level {level}: {:?}",
         //     C::name(),
+        //     view.best_idx.unwrap(),
         //     self.entries
         // );
         self.views[level]
